@@ -70,7 +70,6 @@
 #include "ble_nus.h"
 #include "app_uart.h"
 #include "app_util_platform.h"
-#include "bsp_btn_ble.h"
 #include "nrf_pwr_mgmt.h"
 
 #include "nrf_drv_clock.h"
@@ -97,6 +96,14 @@
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
 
+#include "nrfx_spim.h"
+#include "boards.h"
+#include "bsp.h"
+#include "nrf_gpio.h"
+#include "nrf_drv_spi.h"
+#include "lv_conf.h"
+#include "lvgl.h"
+
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
 #define DEVICE_NAME                     "NUS FreeRTOS"                              /**< Name of device. Will be included in the advertising data. */
@@ -121,7 +128,32 @@
 #define UART_TX_BUF_SIZE                256                                         /**< UART TX buffer size. */
 #define UART_RX_BUF_SIZE                256                                         /**< UART RX buffer size. */
 
+#define TASK_DELAY                      500                                         /**< Task delay. Delays a LED0 task for 200 ms */
 
+#define SPI_INSTANCE                    0                                           /**< SPI instance index. */
+
+// lvgl driver defines
+#define SHARP_MIP_HEADER                0
+#define SHARP_MIP_UPDATE_RAM_FLAG       (1 << 7)                                    /* (M0) Mode flag : H -> update memory, L -> maintain memory */
+#define SHARP_MIP_COM_INVERSION_FLAG    (1 << 6)                                    /* (M1) Frame inversion flag : relevant when EXTMODE = L,    */
+                                                                                    /*      H -> outputs VCOM = H, L -> outputs VCOM = L         */
+#define SHARP_MIP_CLEAR_SCREEN_FLAG     (1 << 5)                                    /* (M2) All clear flag : H -> clear all pixels               */
+#define SHARP_MIP_HOR_RES               LV_HOR_RES
+#define SHARP_MIP_VER_RES               LV_VER_RES
+#define SHARP_MIP_SOFT_COM_INVERSION    1
+static const uint8_t table[] = {0x00, 0x80, 0x40, 0xc0, 0x20, 0xa0, 0x60, 0xe0, 0x10, 0x90, 0x50, 0xd0, 0x30, 0xb0, 0x70, 0xf0, 0x08, 0x88, 0x48, 0xc8, 0x28, 0xa8, 0x68, 0xe8, 0x18, 0x98, 0x58, 0xd8, 0x38, 0xb8, 0x78, 0xf8, 0x04, 0x84, 0x44, 0xc4, 0x24, 0xa4, 0x64, 0xe4, 0x14, 0x94, 0x54, 0xd4, 0x34, 0xb4, 0x74, 0xf4, 0x0c, 0x8c, 0x4c, 0xcc, 0x2c, 0xac, 0x6c, 0xec, 0x1c, 0x9c, 0x5c, 0xdc, 0x3c, 0xbc, 0x7c, 0xfc, 0x02, 0x82, 0x42, 0xc2, 0x22, 0xa2, 0x62, 0xe2, 0x12, 0x92, 0x52, 0xd2, 0x32, 0xb2, 0x72, 0xf2, 0x0a, 0x8a, 0x4a, 0xca, 0x2a, 0xaa, 0x6a, 0xea, 0x1a, 0x9a, 0x5a, 0xda, 0x3a, 0xba, 0x7a, 0xfa, 0x06, 0x86, 0x46, 0xc6, 0x26, 0xa6, 0x66, 0xe6, 0x16, 0x96, 0x56, 0xd6, 0x36, 0xb6, 0x76, 0xf6, 0x0e, 0x8e, 0x4e, 0xce, 0x2e, 0xae, 0x6e, 0xee, 0x1e, 0x9e, 0x5e, 0xde, 0x3e, 0xbe, 0x7e, 0xfe, 0x01, 0x81, 0x41, 0xc1, 0x21, 0xa1, 0x61, 0xe1, 0x11, 0x91, 0x51, 0xd1, 0x31, 0xb1, 0x71, 0xf1, 0x09, 0x89, 0x49, 0xc9, 0x29, 0xa9, 0x69, 0xe9, 0x19, 0x99, 0x59, 0xd9, 0x39, 0xb9, 0x79, 0xf9, 0x05, 0x85, 0x45, 0xc5, 0x25, 0xa5, 0x65, 0xe5, 0x15, 0x95, 0x55, 0xd5, 0x35, 0xb5, 0x75, 0xf5, 0x0d, 0x8d, 0x4d, 0xcd, 0x2d, 0xad, 0x6d, 0xed, 0x1d, 0x9d, 0x5d, 0xdd, 0x3d, 0xbd, 0x7d, 0xfd, 0x03, 0x83, 0x43, 0xc3, 0x23, 0xa3, 0x63, 0xe3, 0x13, 0x93, 0x53, 0xd3, 0x33, 0xb3, 0x73, 0xf3, 0x0b, 0x8b, 0x4b, 0xcb, 0x2b, 0xab, 0x6b, 0xeb, 0x1b, 0x9b, 0x5b, 0xdb, 0x3b, 0xbb, 0x7b, 0xfb, 0x07, 0x87, 0x47, 0xc7, 0x27, 0xa7, 0x67, 0xe7, 0x17, 0x97, 0x57, 0xd7, 0x37, 0xb7, 0x77, 0xf7, 0x0f, 0x8f, 0x4f, 0xcf, 0x2f, 0xaf, 0x6f, 0xef, 0x1f, 0x9f, 0x5f, 0xdf, 0x3f, 0xbf, 0x7f, 0xff};
+#define SHARP_MIP_REV_BYTE(b)           table[b]                                    /*((uint8_t) __REV(__RBIT(b)))*/  /*Architecture / compiler dependent byte bits order reverse*/
+#define BUFIDX(x, y)                    (((x) >> 3) + ((y) * (2 + (SHARP_MIP_HOR_RES >> 3))) + 2)
+#define PIXIDX(x)                       SHARP_MIP_REV_BYTE(1 << ((x) & 7))
+#if SHARP_MIP_SOFT_COM_INVERSION
+static bool com_output_state = false;
+#endif
+
+#define LVGL_TIMER_PERIOD               5                                           // lvgl timer interrupt period in ms
+#define LVGL_TASK_PERIOD                5
+
+
+// ble services defines
 BLE_NUS_DEF(m_nus, NRF_SDH_BLE_TOTAL_LINK_COUNT);                                   /**< BLE NUS service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                                           /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);                                                             /**< Context for the Queued Write module.*/
@@ -135,8 +167,155 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 };
 
 #if NRF_LOG_ENABLED
-static TaskHandle_t m_logger_thread;                                /**< Definition of Logger thread. */
+static TaskHandle_t m_logger_thread;                                                /**< Definition of Logger thread. */
 #endif
+
+static TaskHandle_t m_led_thread;                                                   /**< Definition of LED thread. */
+static TaskHandle_t m_lvgl_thread;                                                  /**< Definition of LED thread. */
+
+const nrfx_spim_t spi = NRFX_SPIM_INSTANCE(SPI_INSTANCE);                           /**< SPI instance. */
+nrfx_spim_xfer_desc_t mip_data_struct;
+nrfx_err_t error_user_readable;
+
+static const uint16_t bit_reverse_table[303] = {256, 128, 384, 64, 320, 192, 448, 32, 288, 160, 416, 96, 352, 224, 480, 16, 272, 144, 400, 80, 336, 208, 464, 48, 304, 176, 432, 112, 368, 240, 496, 8, 264, 136, 392, 72, 328, 200, 456, 40, 296, 168, 424, 104, 360, 232, 488, 24, 280, 152, 408, 88, 344, 216, 472, 56, 312, 184, 440, 120, 376, 248, 504, 4, 260, 132, 388, 68, 324, 196, 452, 36, 292, 164, 420, 100, 356, 228, 484, 20, 276, 148, 404, 84, 340, 212, 468, 52, 308, 180, 436, 116, 372, 244, 500, 12, 268, 140, 396, 76, 332, 204, 460, 44, 300, 172, 428, 108, 364, 236, 492, 28, 284, 156, 412, 92, 348, 220, 476, 60, 316, 188, 444, 124, 380, 252, 508, 2, 258, 130, 386, 66, 322, 194, 450, 34, 290, 162, 418, 98, 354, 226, 482, 18, 274, 146, 402, 82, 338, 210, 466, 50, 306, 178, 434, 114, 370, 242, 498, 10, 266, 138, 394, 74, 330, 202, 458, 42, 298, 170, 426, 106, 362, 234, 490, 26, 282, 154, 410, 90, 346, 218, 474, 58, 314, 186, 442, 122, 378, 250, 506, 6, 262, 134, 390, 70, 326, 198, 454, 38, 294, 166, 422, 102, 358, 230, 486, 22, 278, 150, 406, 86, 342, 214, 470, 54, 310, 182, 438, 118, 374, 246, 502, 14, 270, 142, 398, 78, 334, 206, 462, 46, 302, 174, 430, 110, 366, 238, 494, 30, 286, 158, 414, 94, 350, 222, 478, 62, 318, 190, 446, 126, 382, 254, 510, 1, 257, 129, 385, 65, 321, 193, 449, 33, 289, 161, 417, 97, 353, 225, 481, 17, 273, 145, 401, 81, 337, 209, 465, 49, 305, 177, 433, 113, 369, 241, 497, 9, 265, 137, 393, 73, 329, 201, 457, 41, 297, 169, 425, 105, 361, 233, 489};
+
+TimerHandle_t lvgl_toggle_timer_handle;                                             /**< Reference to LED1 toggling FreeRTOS timer. */
+
+void sharp_mip_init(void) {
+  /* These displays have nothing to initialize */
+}
+
+
+void sharp_mip_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p) {
+
+  /*Return if the area is out the screen*/
+  if(area->y2 < 0) return;
+  if(area->y1 > SHARP_MIP_VER_RES - 1) return;
+
+  /*Truncate the area to the screen*/
+  uint16_t act_y1 = area->y1 < 0 ? 0 : area->y1;
+  uint16_t act_y2 = area->y2 > SHARP_MIP_VER_RES - 1 ? SHARP_MIP_VER_RES - 1 : area->y2;
+
+  uint8_t * buf      = (uint8_t *) color_p;                     /*Get the buffer address*/
+  uint16_t  buf_h    = (act_y2 - act_y1 + 1);                   /*Number of buffer lines*/
+  uint16_t  buf_size = buf_h * (2 + SHARP_MIP_HOR_RES / 8) + 2; /*Buffer size in bytes  */
+  
+  //buf[0] = 0;
+  
+  /* Set lines to flush dummy byte & gate address in VDB*/
+  for(uint16_t act_y = 0 ; act_y < buf_h ; act_y++) {
+    buf[BUFIDX(0, act_y) - 1] = bit_reverse_table[act_y1 + act_y + 0] & 0xFF;
+    buf[BUFIDX(0, act_y) - 2] = (bit_reverse_table[act_y1 + act_y + 0] >> 8);
+  }
+
+  /* Set last dummy two bytes in VDB */
+  buf[BUFIDX(0, buf_h) - 1] = 0;
+  buf[BUFIDX(0, buf_h) - 2] = 0;
+
+  /* Set frame header in VDB */
+  buf[0] |= SHARP_MIP_HEADER | SHARP_MIP_UPDATE_RAM_FLAG;
+
+  /* Write the frame on display memory */
+  mip_data_struct.p_tx_buffer = buf;
+  mip_data_struct.tx_length = buf_size;
+  nrfx_spim_xfer(&spi, &mip_data_struct, 0);
+
+  lv_disp_flush_ready(disp_drv);
+}
+
+void sharp_mip_set_px(lv_disp_drv_t * disp_drv, uint8_t * buf, lv_coord_t buf_w, lv_coord_t x, lv_coord_t y, lv_color_t color, lv_opa_t opa) {
+  (void) disp_drv;
+  (void) buf_w;
+  (void) opa;
+
+  if (lv_color_to1(color) != 0) {
+    buf[BUFIDX(x, y)] |=  PIXIDX(x);  /*Set VDB pixel bit to 1 for other colors than BLACK*/
+  } else {
+    buf[BUFIDX(x, y)] &= ~PIXIDX(x);  /*Set VDB pixel bit to 0 for BLACK color*/
+  }
+}
+
+void sharp_mip_rounder(lv_disp_drv_t * disp_drv, lv_area_t * area) {
+  (void) disp_drv;
+
+  /* Round area to a whole line */
+  area->x1 = 0;
+  area->x2 = SHARP_MIP_HOR_RES - 1;
+}
+
+#if SHARP_MIP_SOFT_COM_INVERSION
+void sharp_mip_com_inversion(void) {
+  uint8_t inversion_header[2] = {0};
+
+  /* Set inversion header */
+  if (com_output_state) {
+    com_output_state = false;
+  } else {
+    inversion_header[0] |= SHARP_MIP_COM_INVERSION_FLAG;
+    com_output_state = true;
+  }
+
+  /* Write inversion header on display memory */
+  mip_data_struct.p_tx_buffer = inversion_header;
+  mip_data_struct.tx_length = 2;
+  nrfx_spim_xfer(&spi, &mip_data_struct, 0);
+}
+#endif
+
+uint8_t my_btn_read(void)
+{
+    
+    if(bsp_button_is_pressed(0))
+    {
+        bsp_board_led_invert(0);
+        return LV_KEY_UP;
+    }
+    else if(bsp_button_is_pressed(1))
+    {
+        bsp_board_led_invert(1);
+        return LV_KEY_DOWN;
+    }
+    else if(bsp_button_is_pressed(2))
+    {
+        bsp_board_led_invert(2);
+        return LV_KEY_ESC;
+    }
+    else if(bsp_button_is_pressed(3))
+    {
+        bsp_board_led_invert(3);
+        return LV_KEY_ENTER;
+    }
+    else{
+        return 0;
+    }
+    
+}
+
+bool buttons_read(lv_indev_drv_t * drv, lv_indev_data_t * data)
+{
+    static uint8_t last_btn = 0;         /* Store the last pressed button */
+    uint8_t btn_pr = my_btn_read();      /* Get the ID (0,1,2...) of the pressed button */
+    
+    if(btn_pr > 0)                      /* Is there a button press? */
+    {
+        last_btn = btn_pr;              /* Save the ID of the pressed button */
+        data->state = LV_INDEV_STATE_PR;/* Set the pressed state */
+    }
+    else                                /* Set the released state */
+    {
+        data->state = LV_INDEV_STATE_REL;
+    }
+
+    data->key = last_btn;               /* Set the last button */
+
+    
+//    data->key = last_key();            /*Get the last pressed or released key*/
+
+//    if(key_pressed()) data->state = LV_INDEV_STATE_PR;
+//    else data->state = LV_INDEV_STATE_REL;
+    
+    return false;
+}
 
 
 /**@brief Function for assert macro callback.
@@ -606,11 +785,11 @@ static void uart_init(void)
         .cts_pin_no   = CTS_PIN_NUMBER,
         .flow_control = APP_UART_FLOW_CONTROL_DISABLED,
         .use_parity   = false,
-#if defined (UART_PRESENT)
-        .baud_rate    = NRF_UART_BAUDRATE_115200
-#else
+//#if defined (UART_PRESENT)
+//        .baud_rate    = NRF_UART_BAUDRATE_115200
+//#else
         .baud_rate    = NRF_UARTE_BAUDRATE_115200
-#endif
+//#endif
     };
 
     APP_UART_FIFO_INIT(&comm_params,
@@ -675,8 +854,8 @@ static void buttons_leds_init(bool * p_erase_bonds)
     uint32_t err_code = bsp_init(BSP_INIT_LEDS | BSP_INIT_BUTTONS, bsp_event_handler);
     APP_ERROR_CHECK(err_code);
 
-    err_code = bsp_btn_ble_init(NULL, &startup_event);
-    APP_ERROR_CHECK(err_code);
+//    err_code = bsp_btn_ble_init(NULL, &startup_event);
+//    APP_ERROR_CHECK(err_code);
 
     *p_erase_bonds = (startup_event == BSP_EVENT_CLEAR_BONDING_DATA);
 }
@@ -786,6 +965,120 @@ sd_app_evt_wait();  // https://devzone.nordicsemi.com/nordic/nordic-blog/b/blog/
 
 }
 
+static void led_thread(void * arg)
+{
+    UNUSED_PARAMETER(arg);
+
+    while(1)
+    {
+        bsp_board_led_invert(BSP_BOARD_LED_3);
+
+        /* Delay a task for a given number of ticks */
+        vTaskDelay(TASK_DELAY);
+    }
+}
+
+
+void lvgl_init(void)
+{
+    // LV init
+    lv_init();
+    static lv_disp_buf_t disp_buf;              /*A static or global variable to store the buffers*/
+    static lv_color_t buf_1[(LV_VER_RES_MAX) * (2 + (LV_HOR_RES_MAX / 8)) + 2]; /*Static or global buffer(s). The second buffer is optional*/
+    lv_disp_buf_init(&disp_buf, buf_1, NULL, LV_HOR_RES_MAX*LV_VER_RES_MAX);/*Initialize `disp_buf` with the buffer(s) */
+    lv_disp_drv_t disp_drv;                     /*A variable to hold the drivers. Can be local variable*/
+    lv_disp_drv_init(&disp_drv);            /*Basic initialization*/
+    disp_drv.buffer = &disp_buf;            /*Set an initialized buffer*/
+    disp_drv.flush_cb = sharp_mip_flush;   /*Set a flush callback to draw to the display*/
+    disp_drv.rounder_cb = sharp_mip_rounder;
+    disp_drv.set_px_cb = sharp_mip_set_px;
+    lv_disp_t * disp;
+    disp = lv_disp_drv_register(&disp_drv); /*Register the driver and save the created display objects*/
+    
+    // LV keypad init
+    lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);      /*Basic initialization*/
+    indev_drv.type = LV_INDEV_TYPE_KEYPAD;                 /*See below.*/
+    indev_drv.read_cb = buttons_read;              /*See below.*/
+    /*Register the driver in LittlevGL and save the created input device object*/
+    lv_indev_t * my_indev = lv_indev_drv_register(&indev_drv);
+    
+    // theme init
+//    lv_theme_t * th = lv_theme_mono_init(NULL, NULL);
+//    lv_theme_set_current(th);
+    
+    // Create an object group
+    lv_group_t * g = lv_group_create();
+    lv_indev_set_group(my_indev, g);
+    
+    /*Create a drop down list*/
+    lv_obj_t * ddlist = lv_dropdown_create(lv_scr_act(), NULL);
+    lv_dropdown_set_options(ddlist,
+                            "Apple\n"
+                            "Banana\n"
+                            "Orange\n"
+                            "Melon\n"
+                            "Grape\n"
+                            "Raspberry");
+
+    lv_obj_set_width(ddlist, 200);
+    //lv_ddlist_set_draw_arrow(ddlist, true);
+    lv_obj_align(ddlist, NULL, LV_ALIGN_IN_TOP_MID, 0, 20);
+    //lv_obj_set_event_cb(ddlist, event_handler);
+
+    lv_group_add_obj(g, ddlist);
+
+
+}
+
+
+static void lvgl_thread(void * arg)
+{
+    UNUSED_PARAMETER(arg);
+
+    lvgl_init();
+
+    while(1)
+    {
+        bsp_board_led_invert(BSP_BOARD_LED_2);
+        lv_task_handler();
+        //NRF_LOG_INFO("LVGL task enter.");
+        vTaskDelay(LVGL_TASK_PERIOD);
+    }
+}
+
+
+
+void spi_init(void)
+{
+    nrfx_spim_config_t spi_config = NRFX_SPIM_DEFAULT_CONFIG;
+    spi_config.ss_pin   = SPI_SS_PIN;
+    spi_config.mosi_pin = SPI_MOSI_PIN;
+    spi_config.sck_pin  = SPI_SCK_PIN;
+    spi_config.ss_active_high = false;
+    spi_config.frequency = NRF_SPIM_FREQ_2M;
+    spi_config.mode      = NRF_SPIM_MODE_0;
+    spi_config.bit_order = NRF_SPIM_BIT_ORDER_MSB_FIRST;
+    error_user_readable = nrfx_spim_init(&spi, &spi_config, NULL, NULL);
+    
+    mip_data_struct.p_tx_buffer = 0;
+    mip_data_struct.tx_length = 0;
+    mip_data_struct.p_rx_buffer = NULL;
+    mip_data_struct.rx_length = NULL;
+}
+
+
+
+static void lvgl_toggle_timer_callback (void * pvParameter)
+{
+    UNUSED_PARAMETER(pvParameter);
+
+    bsp_board_led_invert(BSP_BOARD_LED_1);
+    //NRF_LOG_INFO("Timer toggle.");
+    lv_tick_inc(LVGL_TIMER_PERIOD);
+    
+}
+
 
 /**@brief Application main function.
  */
@@ -794,12 +1087,10 @@ int main(void)
     bool erase_bonds;
 
     // Initialize.
+    spi_init();
     uart_init();
     log_init();
-
-    NRF_LOG_INFO("Test");
     clock_init();
-    NRF_LOG_INFO("Test2");
 
     // Do not start any interrupt that uses system functions before system initialisation.
     // The best solution is to start the OS before any other initalisation.
@@ -812,6 +1103,21 @@ int main(void)
     }
 #endif
 
+    if (pdPASS != xTaskCreate(led_thread, "LED", 256, NULL, 1, &m_led_thread))
+    {
+        APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
+    }
+    NRF_LOG_INFO("LED thread started.");
+
+    if (pdPASS != xTaskCreate(lvgl_thread, "LVGL", 1024, NULL, 1, &m_lvgl_thread))
+    {
+        APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
+    }
+    NRF_LOG_INFO("LVGL thread started.");
+
+    lvgl_toggle_timer_handle = xTimerCreate( "LVGL", LVGL_TIMER_PERIOD, pdTRUE, NULL, lvgl_toggle_timer_callback);
+    UNUSED_VARIABLE(xTimerStart(lvgl_toggle_timer_handle, 0));
+
     // Activate deep sleep mode.
     SCB->SCR |= SCB_SCR_SLEEPDEEP_Msk;
 
@@ -820,7 +1126,7 @@ int main(void)
 
     timers_init();
     buttons_leds_init(&erase_bonds);
-//    power_management_init();
+    power_management_init();
     
     gap_params_init();
     gatt_init();
@@ -841,16 +1147,6 @@ int main(void)
         APP_ERROR_HANDLER(NRF_ERROR_FORBIDDEN);
     }
 
-    /*// Start execution.
-    printf("\r\nUART started.\r\n");
-    NRF_LOG_INFO("Debug logging for UART over RTT started.");
-    advertising_start();
-
-    // Enter main loop.
-    for (;;)
-    {
-        idle_state_handle();
-    }*/
 }
 
 
