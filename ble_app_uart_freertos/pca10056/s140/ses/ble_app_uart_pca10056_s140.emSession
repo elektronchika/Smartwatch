@@ -43,7 +43,7 @@
  </TraceWindow>
  <Watch1>
   <Watches active="1" update="Never">
-   <Watchpoint expression="lv_theme_mono_init" name="lv_theme_mono_init" radix="16" linenumber="1103" filename="../../../main.c"/>
+   <Watchpoint expression="lv_theme_mono_init" name="lv_theme_mono_init" radix="16" linenumber="1105" filename="../../../main.c"/>
   </Watches>
  </Watch1>
  <Watch2>
@@ -56,9 +56,10 @@
   <Watches active="0" update="Never"/>
  </Watch4>
  <Files>
-  <SessionOpenFile windowGroup="DockEditLeft" x="2" y="857" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../main.c" selected="1" top="826" codecName="Default"/>
-  <SessionOpenFile windowGroup="DockEditLeft" x="66" y="434" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../external/lvgl-7.1.0/lv_conf.h" selected="0" top="399" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="10" y="1044" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../main.c" selected="0" top="1021" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="434" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../external/lvgl-7.1.0/lv_conf.h" selected="0" top="399" codecName="Default"/>
   <SessionOpenFile windowGroup="DockEditLeft" x="0" y="80" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../config/FreeRTOSConfig.h" selected="0" top="48" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="12" y="98" useTextEdit="1" useBinaryEdit="0" left="0" path="C:/Program Files/SEGGER/SEGGER Embedded Studio for ARM 4.42/include/time.h" selected="1" top="137" codecName="Default"/>
  </Files>
- <ARMCrossStudioWindow activeProject="ble_app_uart_freertos_pca10056_s140" fileDialogDefaultFilter="" autoConnectTarget="J-Link" buildConfiguration="Release" sessionSettings="" debugSearchFileMap="" fileDialogInitialDirectory="C:/work/my/nordic/nRF5_SDK_17.0.0_9d13099/external/lvgl-7.1.0" debugSearchPath="" autoConnectCapabilities="3711"/>
+ <ARMCrossStudioWindow activeProject="ble_app_uart_freertos_pca10056_s140" fileDialogDefaultFilter="" autoConnectTarget="J-Link" buildConfiguration="Release" sessionSettings="" debugSearchFileMap="" fileDialogInitialDirectory="C:/work/my/nordic/nRF5_SDK_17.0.0_9d13099/examples/ble_peripheral/ble_app_uart_freertos" debugSearchPath="" autoConnectCapabilities="3711"/>
 </session>

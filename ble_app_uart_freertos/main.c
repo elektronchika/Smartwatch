@@ -49,6 +49,7 @@
  */
 
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include "nordic_common.h"
@@ -104,6 +105,8 @@
 #include "lv_conf.h"
 #include "lvgl.h"
 
+#include "time.h"
+
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
 #define DEVICE_NAME                     "NUS FreeRTOS"                              /**< Name of device. Will be included in the advertising data. */
@@ -151,6 +154,7 @@ static bool com_output_state = false;
 
 #define LVGL_TIMER_PERIOD               5                                           // lvgl timer interrupt period in ms
 #define LVGL_TASK_PERIOD                5
+#define CALENDAR_TIMER_PERIOD           1000
 
 
 // ble services defines
@@ -180,6 +184,13 @@ nrfx_err_t error_user_readable;
 static const uint16_t bit_reverse_table[303] = {256, 128, 384, 64, 320, 192, 448, 32, 288, 160, 416, 96, 352, 224, 480, 16, 272, 144, 400, 80, 336, 208, 464, 48, 304, 176, 432, 112, 368, 240, 496, 8, 264, 136, 392, 72, 328, 200, 456, 40, 296, 168, 424, 104, 360, 232, 488, 24, 280, 152, 408, 88, 344, 216, 472, 56, 312, 184, 440, 120, 376, 248, 504, 4, 260, 132, 388, 68, 324, 196, 452, 36, 292, 164, 420, 100, 356, 228, 484, 20, 276, 148, 404, 84, 340, 212, 468, 52, 308, 180, 436, 116, 372, 244, 500, 12, 268, 140, 396, 76, 332, 204, 460, 44, 300, 172, 428, 108, 364, 236, 492, 28, 284, 156, 412, 92, 348, 220, 476, 60, 316, 188, 444, 124, 380, 252, 508, 2, 258, 130, 386, 66, 322, 194, 450, 34, 290, 162, 418, 98, 354, 226, 482, 18, 274, 146, 402, 82, 338, 210, 466, 50, 306, 178, 434, 114, 370, 242, 498, 10, 266, 138, 394, 74, 330, 202, 458, 42, 298, 170, 426, 106, 362, 234, 490, 26, 282, 154, 410, 90, 346, 218, 474, 58, 314, 186, 442, 122, 378, 250, 506, 6, 262, 134, 390, 70, 326, 198, 454, 38, 294, 166, 422, 102, 358, 230, 486, 22, 278, 150, 406, 86, 342, 214, 470, 54, 310, 182, 438, 118, 374, 246, 502, 14, 270, 142, 398, 78, 334, 206, 462, 46, 302, 174, 430, 110, 366, 238, 494, 30, 286, 158, 414, 94, 350, 222, 478, 62, 318, 190, 446, 126, 382, 254, 510, 1, 257, 129, 385, 65, 321, 193, 449, 33, 289, 161, 417, 97, 353, 225, 481, 17, 273, 145, 401, 81, 337, 209, 465, 49, 305, 177, 433, 113, 369, 241, 497, 9, 265, 137, 393, 73, 329, 201, 457, 41, 297, 169, 425, 105, 361, 233, 489};
 
 TimerHandle_t lvgl_toggle_timer_handle;                                             /**< Reference to LED1 toggling FreeRTOS timer. */
+TimerHandle_t calendar_timer_handle;                                                // 1s timer for undating the clock and date
+
+static struct tm time_struct = {0};
+static time_t calendar_time = 1595256600, calendar_time_old = 1595256600;
+
+static char* time_string;
+static lv_obj_t * ta1;
 
 void sharp_mip_init(void) {
   /* These displays have nothing to initialize */
@@ -267,22 +278,22 @@ uint8_t my_btn_read(void)
     
     if(bsp_button_is_pressed(0))
     {
-        bsp_board_led_invert(0);
+        //bsp_board_led_invert(0);
         return LV_KEY_UP;
     }
     else if(bsp_button_is_pressed(1))
     {
-        bsp_board_led_invert(1);
+        //bsp_board_led_invert(1);
         return LV_KEY_DOWN;
     }
     else if(bsp_button_is_pressed(2))
     {
-        bsp_board_led_invert(2);
+        //bsp_board_led_invert(2);
         return LV_KEY_ESC;
     }
     else if(bsp_button_is_pressed(3))
     {
-        bsp_board_led_invert(3);
+        //bsp_board_led_invert(3);
         return LV_KEY_ENTER;
     }
     else{
@@ -1028,6 +1039,13 @@ void lvgl_init(void)
 
     lv_group_add_obj(g, ddlist);
 
+    
+    ta1 = lv_textarea_create(lv_scr_act(), NULL);
+    lv_obj_set_size(ta1, 200, 150);
+    lv_obj_align(ta1, NULL, LV_ALIGN_CENTER, 0, 0);
+    //lv_textarea_set_text(ta1, "A text in a Text Area");    /*Set an initial text*/
+
+    lv_group_add_obj(g, ta1);
 
 }
 
@@ -1040,8 +1058,16 @@ static void lvgl_thread(void * arg)
 
     while(1)
     {
-        bsp_board_led_invert(BSP_BOARD_LED_2);
+        //bsp_board_led_invert(BSP_BOARD_LED_2);
         lv_task_handler();
+
+        if(calendar_time != calendar_time_old)
+        {
+            time_string = ctime(&calendar_time);
+            lv_textarea_set_text(ta1, time_string);
+            calendar_time_old = calendar_time;
+        }
+
         //NRF_LOG_INFO("LVGL task enter.");
         vTaskDelay(LVGL_TASK_PERIOD);
     }
@@ -1079,14 +1105,34 @@ static void lvgl_toggle_timer_callback (void * pvParameter)
     
 }
 
+static void calendar_timer_callback(void * pvParameter)
+{
+    UNUSED_PARAMETER(pvParameter);
+
+    bsp_board_led_invert(BSP_BOARD_LED_2);
+    calendar_time++;
+    
+
+    
+    //NRF_LOG_INFO("Current time is %s\n", time_string);
+
+    //lv_textarea_set_text(ta1, time_string);
+
+}
+
 
 /**@brief Application main function.
  */
 int main(void)
 {
     bool erase_bonds;
+    
+    uint32_t year, month, day, hour, minute, second;
 
     // Initialize.
+    
+    //calendar_time = time(NULL);
+
     spi_init();
     uart_init();
     log_init();
@@ -1103,11 +1149,11 @@ int main(void)
     }
 #endif
 
-    if (pdPASS != xTaskCreate(led_thread, "LED", 256, NULL, 1, &m_led_thread))
-    {
-        APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
-    }
-    NRF_LOG_INFO("LED thread started.");
+    //if (pdPASS != xTaskCreate(led_thread, "LED", 256, NULL, 1, &m_led_thread))
+    //{
+    //    APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
+    //}
+    //NRF_LOG_INFO("LED thread started.");
 
     if (pdPASS != xTaskCreate(lvgl_thread, "LVGL", 1024, NULL, 1, &m_lvgl_thread))
     {
@@ -1117,6 +1163,11 @@ int main(void)
 
     lvgl_toggle_timer_handle = xTimerCreate( "LVGL", LVGL_TIMER_PERIOD, pdTRUE, NULL, lvgl_toggle_timer_callback);
     UNUSED_VARIABLE(xTimerStart(lvgl_toggle_timer_handle, 0));
+    NRF_LOG_INFO("LVGL timer started.");
+
+    calendar_timer_handle = xTimerCreate("CALENDAR", CALENDAR_TIMER_PERIOD, pdTRUE, NULL, calendar_timer_callback);
+    UNUSED_VARIABLE(xTimerStart(calendar_timer_handle, 0));
+    NRF_LOG_INFO("Calendar timer started.");
 
     // Activate deep sleep mode.
     SCB->SCR |= SCB_SCR_SLEEPDEEP_Msk;
