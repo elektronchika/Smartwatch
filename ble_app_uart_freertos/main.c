@@ -152,9 +152,18 @@ static const uint8_t table[] = {0x00, 0x80, 0x40, 0xc0, 0x20, 0xa0, 0x60, 0xe0, 
 static bool com_output_state = false;
 #endif
 
-#define LVGL_TIMER_PERIOD               5                                           // lvgl timer interrupt period in ms
-#define LVGL_TASK_PERIOD                5
+#define LVGL_TIMER_PERIOD               10                                           // lvgl timer interrupt period in ms
+#define LVGL_TASK_PERIOD                10
 #define CALENDAR_TIMER_PERIOD           1000
+
+#define SEC_PARAM_BOND                  1                                           /**< Perform bonding. */
+#define SEC_PARAM_MITM                  0                                           /**< Man In The Middle protection not required. */
+#define SEC_PARAM_LESC                  1                                           /**< LE Secure Connections enabled. */
+#define SEC_PARAM_KEYPRESS              0                                           /**< Keypress notifications not enabled. */
+#define SEC_PARAM_IO_CAPABILITIES       BLE_GAP_IO_CAPS_NONE                        /**< No I/O capabilities. */
+#define SEC_PARAM_OOB                   0                                           /**< Out Of Band data not available. */
+#define SEC_PARAM_MIN_KEY_SIZE          7                                           /**< Minimum encryption key size. */
+#define SEC_PARAM_MAX_KEY_SIZE          16                                          /**< Maximum encryption key size. */
 
 
 // ble services defines
@@ -191,6 +200,14 @@ static time_t calendar_time = 1595256600, calendar_time_old = 1595256600;
 
 static char* time_string;
 static lv_obj_t * ta1;
+static lv_obj_t * ta2;
+
+static lv_disp_drv_t disp_drv;                     /*A variable to hold the drivers. Can be local variable*/
+//static lv_disp_drv_t * disp_p;
+
+static uint8_t const * received_data = NULL;
+static uint16_t received_data_len = 0;
+bool received_new_data = false;
 
 void sharp_mip_init(void) {
   /* These displays have nothing to initialize */
@@ -232,6 +249,7 @@ void sharp_mip_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_
   nrfx_spim_xfer(&spi, &mip_data_struct, 0);
 
   lv_disp_flush_ready(disp_drv);
+  //disp_p = disp_drv;
 }
 
 void sharp_mip_set_px(lv_disp_drv_t * disp_drv, uint8_t * buf, lv_coord_t buf_w, lv_coord_t x, lv_coord_t y, lv_color_t color, lv_opa_t opa) {
@@ -411,6 +429,10 @@ static void nus_data_handler(ble_nus_evt_t * p_evt)
     {
         uint32_t err_code;
 
+        received_new_data = true;
+        received_data = (p_evt->params.rx_data.p_data);
+        received_data_len = (p_evt->params.rx_data.length);
+
         NRF_LOG_DEBUG("Received data from BLE NUS. Writing data on UART.");
         NRF_LOG_HEXDUMP_DEBUG(p_evt->params.rx_data.p_data, p_evt->params.rx_data.length);
 
@@ -552,7 +574,7 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
             APP_ERROR_CHECK(err_code);
             break;
         case BLE_ADV_EVT_IDLE:
-            sleep_mode_enter();
+            //sleep_mode_enter();
             break;
         default:
             break;
@@ -622,6 +644,23 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             err_code = sd_ble_gap_disconnect(p_ble_evt->evt.gatts_evt.conn_handle,
                                              BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
             APP_ERROR_CHECK(err_code);
+            break;
+
+        case BLE_GAP_EVT_AUTH_KEY_REQUEST:
+            NRF_LOG_INFO("BLE_GAP_EVT_AUTH_KEY_REQUEST");
+            break;
+
+        case BLE_GAP_EVT_LESC_DHKEY_REQUEST:
+            NRF_LOG_INFO("BLE_GAP_EVT_LESC_DHKEY_REQUEST");
+            break;
+
+        case BLE_GAP_EVT_AUTH_STATUS:
+            NRF_LOG_INFO("BLE_GAP_EVT_AUTH_STATUS: status=0x%x bond=0x%x lv4: %d kdist_own:0x%x kdist_peer:0x%x",
+                         p_ble_evt->evt.gap_evt.params.auth_status.auth_status,
+                         p_ble_evt->evt.gap_evt.params.auth_status.bonded,
+                         p_ble_evt->evt.gap_evt.params.auth_status.sm1_levels.lv4,
+                         *((uint8_t *)&p_ble_evt->evt.gap_evt.params.auth_status.kdist_own),
+                         *((uint8_t *)&p_ble_evt->evt.gap_evt.params.auth_status.kdist_peer));
             break;
 
         default:
@@ -694,7 +733,7 @@ void bsp_event_handler(bsp_event_t event)
     switch (event)
     {
         case BSP_EVENT_SLEEP:
-            sleep_mode_enter();
+            //sleep_mode_enter();
             break;
 
         case BSP_EVENT_DISCONNECT:
@@ -826,6 +865,86 @@ static void delete_bonds(void)
 }
 
 
+/**@brief Function for starting advertising.
+ */
+/*static void advertising_start(void)
+{
+    uint32_t err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
+    APP_ERROR_CHECK(err_code);
+}*/
+/**@brief Function for starting advertising. */
+static void advertising_start(void * p_erase_bonds)
+{
+    bool erase_bonds = *(bool*)p_erase_bonds;
+
+    if (erase_bonds)
+    {
+        delete_bonds();
+        // Advertising is started by PM_EVT_PEERS_DELETE_SUCCEEDED event.
+    }
+    else
+    {
+        ret_code_t err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
+        APP_ERROR_CHECK(err_code);
+    }
+}
+
+
+/**@brief Function for handling Peer Manager events.
+ *
+ * @param[in] p_evt  Peer Manager event.
+ */
+static void pm_evt_handler(pm_evt_t const * p_evt)
+{
+    pm_handler_on_pm_evt(p_evt);
+    pm_handler_flash_clean(p_evt);
+
+    switch (p_evt->evt_id)
+    {
+        case PM_EVT_PEERS_DELETE_SUCCEEDED:
+            advertising_start(false);
+            break;
+
+        default:
+            break;
+    }
+}
+
+
+/**@brief Function for the Peer Manager initialization.
+ */
+static void peer_manager_init(void)
+{
+    ble_gap_sec_params_t sec_param;
+    ret_code_t           err_code;
+
+    err_code = pm_init();
+    APP_ERROR_CHECK(err_code);
+
+    memset(&sec_param, 0, sizeof(ble_gap_sec_params_t));
+
+    // Security parameters to be used for all security procedures.
+    sec_param.bond           = SEC_PARAM_BOND;
+    sec_param.mitm           = SEC_PARAM_MITM;
+    sec_param.lesc           = SEC_PARAM_LESC;
+    sec_param.keypress       = SEC_PARAM_KEYPRESS;
+    sec_param.io_caps        = SEC_PARAM_IO_CAPABILITIES;
+    sec_param.oob            = SEC_PARAM_OOB;
+    sec_param.min_key_size   = SEC_PARAM_MIN_KEY_SIZE;
+    sec_param.max_key_size   = SEC_PARAM_MAX_KEY_SIZE;
+    sec_param.kdist_own.enc  = 1;
+    sec_param.kdist_own.id   = 1;
+    sec_param.kdist_peer.enc = 1;
+    sec_param.kdist_peer.id  = 1;
+
+    err_code = pm_sec_params_set(&sec_param);
+    APP_ERROR_CHECK(err_code);
+
+    err_code = pm_register(pm_evt_handler);
+    APP_ERROR_CHECK(err_code);
+}
+
+
 /**@brief Function for initializing the Advertising functionality.
  */
 static void advertising_init(void)
@@ -906,31 +1025,6 @@ static void idle_state_handle(void)
 }
 
 
-/**@brief Function for starting advertising.
- */
-/*static void advertising_start(void)
-{
-    uint32_t err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
-    APP_ERROR_CHECK(err_code);
-}*/
-/**@brief Function for starting advertising. */
-static void advertising_start(void * p_erase_bonds)
-{
-    bool erase_bonds = *(bool*)p_erase_bonds;
-
-//    if (erase_bonds)
-//    {
-//        delete_bonds();
-//        // Advertising is started by PM_EVT_PEERS_DELETE_SUCCEEDED event.
-//    }
-//    else
-//    {
-        ret_code_t err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
-        APP_ERROR_CHECK(err_code);
-//    }
-}
-
-
 /**@brief Function for initializing the clock.
  */
 static void clock_init(void)
@@ -990,6 +1084,14 @@ static void led_thread(void * arg)
 }
 
 
+static void event_handler(lv_obj_t * obj, lv_event_t event)
+{
+    if(event == LV_EVENT_CLICKED) {
+        printf("Clicked: %s\n", lv_list_get_btn_text(obj));
+    }
+}
+
+
 void lvgl_init(void)
 {
     // LV init
@@ -997,7 +1099,7 @@ void lvgl_init(void)
     static lv_disp_buf_t disp_buf;              /*A static or global variable to store the buffers*/
     static lv_color_t buf_1[(LV_VER_RES_MAX) * (2 + (LV_HOR_RES_MAX / 8)) + 2]; /*Static or global buffer(s). The second buffer is optional*/
     lv_disp_buf_init(&disp_buf, buf_1, NULL, LV_HOR_RES_MAX*LV_VER_RES_MAX);/*Initialize `disp_buf` with the buffer(s) */
-    lv_disp_drv_t disp_drv;                     /*A variable to hold the drivers. Can be local variable*/
+//    lv_disp_drv_t disp_drv;                     /*A variable to hold the drivers. Can be local variable*/
     lv_disp_drv_init(&disp_drv);            /*Basic initialization*/
     disp_drv.buffer = &disp_buf;            /*Set an initialized buffer*/
     disp_drv.flush_cb = sharp_mip_flush;   /*Set a flush callback to draw to the display*/
@@ -1017,12 +1119,13 @@ void lvgl_init(void)
     // theme init
 //    lv_theme_t * th = lv_theme_mono_init(NULL, NULL);
 //    lv_theme_set_current(th);
+
     
     // Create an object group
     lv_group_t * g = lv_group_create();
     lv_indev_set_group(my_indev, g);
     
-    /*Create a drop down list*/
+    //Create a drop down list
     lv_obj_t * ddlist = lv_dropdown_create(lv_scr_act(), NULL);
     lv_dropdown_set_options(ddlist,
                             "Apple\n"
@@ -1034,18 +1137,60 @@ void lvgl_init(void)
 
     lv_obj_set_width(ddlist, 200);
     //lv_ddlist_set_draw_arrow(ddlist, true);
-    lv_obj_align(ddlist, NULL, LV_ALIGN_IN_TOP_MID, 0, 20);
+    lv_obj_align(ddlist, NULL, LV_ALIGN_IN_TOP_MID, -4, 0);
     //lv_obj_set_event_cb(ddlist, event_handler);
 
     lv_group_add_obj(g, ddlist);
 
     
     ta1 = lv_textarea_create(lv_scr_act(), NULL);
-    lv_obj_set_size(ta1, 200, 150);
-    lv_obj_align(ta1, NULL, LV_ALIGN_CENTER, 0, 0);
-    //lv_textarea_set_text(ta1, "A text in a Text Area");    /*Set an initial text*/
+    lv_obj_set_size(ta1, LV_HOR_RES_MAX-8, 120);
+    lv_obj_align(ta1, NULL, LV_ALIGN_CENTER, -4, -40);
+    //lv_textarea_set_text(ta1, "A text in a Text Area");    //Set an initial text
+    lv_textarea_set_cursor_hidden(ta1, true);
 
     lv_group_add_obj(g, ta1);
+
+    ta2 = lv_textarea_create(lv_scr_act(), NULL);
+    lv_obj_set_size(ta2, LV_HOR_RES_MAX-8, 120);
+    lv_obj_align(ta2, NULL, LV_ALIGN_CENTER, -4, 100);
+    lv_textarea_set_text(ta2, "A text in a Text Area");    //Set an initial text
+    lv_textarea_set_cursor_hidden(ta2, true);
+
+    lv_group_add_obj(g, ta2);
+
+    
+
+    /*//Create a list
+    lv_obj_t * list1 = lv_list_create(lv_scr_act(), NULL);
+    lv_obj_set_size(list1, LV_HOR_RES_MAX-8, LV_VER_RES_MAX);
+    lv_obj_align(list1, NULL, LV_ALIGN_CENTER, -4, 0);
+
+    //Add buttons to the list
+    lv_obj_t * list_btn;
+
+    list_btn = lv_list_add_btn(list1, LV_SYMBOL_FILE, "New");
+    //lv_obj_set_event_cb(list_btn, event_handler);
+
+    list_btn = lv_list_add_btn(list1, LV_SYMBOL_DIRECTORY, "Open");
+    //lv_obj_set_event_cb(list_btn, event_handler);
+
+    list_btn = lv_list_add_btn(list1, LV_SYMBOL_CLOSE, "Delete");
+    //lv_obj_set_event_cb(list_btn, event_handler);
+
+    list_btn = lv_list_add_btn(list1, LV_SYMBOL_EDIT, "Edit");
+    //lv_obj_set_event_cb(list_btn, event_handler);
+
+    list_btn = lv_list_add_btn(list1, LV_SYMBOL_SAVE, "Save");
+    //lv_obj_set_event_cb(list_btn, event_handler);
+
+    list_btn = lv_list_add_btn(list1, LV_SYMBOL_BELL, "Notify");
+    //lv_obj_set_event_cb(list_btn, event_handler);
+
+    list_btn = lv_list_add_btn(list1, LV_SYMBOL_BATTERY_FULL, "Battery");
+    //lv_obj_set_event_cb(list_btn, event_handler);
+
+    lv_group_add_obj(g, list1);*/
 
 }
 
@@ -1065,14 +1210,37 @@ static void lvgl_thread(void * arg)
         {
             time_string = ctime(&calendar_time);
             lv_textarea_set_text(ta1, time_string);
+            //lv_textarea_set_text(ta1, "\b");
             calendar_time_old = calendar_time;
         }
+
+        if(received_new_data)
+        {
+            lv_textarea_set_max_length(ta2, (uint32_t)received_data_len);
+            lv_textarea_set_text(ta2, received_data);
+            received_new_data = false;
+        }
+
 
         //NRF_LOG_INFO("LVGL task enter.");
         vTaskDelay(LVGL_TASK_PERIOD);
     }
 }
 
+
+nrfx_spim_evt_handler_t spi_event_handler(nrf_drv_spi_evt_t const * p_event,
+                       void *                    p_context)
+{
+    //spi_xfer_done = true;
+
+//    lv_disp_flush_ready(disp_p);
+    //NRF_LOG_INFO("Transfer completed.");
+    //if (m_rx_buf[0] != 0)
+    //{
+    //    NRF_LOG_INFO(" Received:");
+    //    NRF_LOG_HEXDUMP_INFO(m_rx_buf, strlen((const char *)m_rx_buf));
+    //}
+}
 
 
 void spi_init(void)
@@ -1085,6 +1253,7 @@ void spi_init(void)
     spi_config.frequency = NRF_SPIM_FREQ_2M;
     spi_config.mode      = NRF_SPIM_MODE_0;
     spi_config.bit_order = NRF_SPIM_BIT_ORDER_MSB_FIRST;
+    //error_user_readable = nrfx_spim_init(&spi, &spi_config, spi_event_handler, NULL);
     error_user_readable = nrfx_spim_init(&spi, &spi_config, NULL, NULL);
     
     mip_data_struct.p_tx_buffer = 0;
@@ -1099,7 +1268,7 @@ static void lvgl_toggle_timer_callback (void * pvParameter)
 {
     UNUSED_PARAMETER(pvParameter);
 
-    bsp_board_led_invert(BSP_BOARD_LED_1);
+    //bsp_board_led_invert(BSP_BOARD_LED_1);
     //NRF_LOG_INFO("Timer toggle.");
     lv_tick_inc(LVGL_TIMER_PERIOD);
     
@@ -1109,7 +1278,7 @@ static void calendar_timer_callback(void * pvParameter)
 {
     UNUSED_PARAMETER(pvParameter);
 
-    bsp_board_led_invert(BSP_BOARD_LED_2);
+    //bsp_board_led_invert(BSP_BOARD_LED_2);
     calendar_time++;
     
 
@@ -1184,6 +1353,7 @@ int main(void)
     services_init();
     advertising_init();
     conn_params_init();
+    peer_manager_init();
 
     // Create a FreeRTOS task for the BLE stack.
     // The task will run advertising_start() before entering its loop.
