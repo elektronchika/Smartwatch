@@ -292,6 +292,7 @@ static void StartIosc( void )
 
     reg = seS1D13C00Read16( SYS_CTRL );
 
+    //seS1D13C00Write16( SYS_CTRL, (0x0011 | (iosc_fq << 1) | (iosc_aj << 8)));
     seS1D13C00Write16( SYS_CTRL, (0x0011 | (iosc_fq << 1) | (iosc_aj << 8)));
 
     // Wait for IOSC to stabilize

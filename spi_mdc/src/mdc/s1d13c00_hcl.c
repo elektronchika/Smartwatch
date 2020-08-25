@@ -230,8 +230,8 @@ static const nrf_drv_spi_t spi = NRF_DRV_SPI_INSTANCE(SPI_INSTANCE);  /**< SPI i
 static volatile bool spi_xfer_done;  /**< Flag used to indicate that SPI instance completed the transfer. */
 
 #define TEST_STRING "Nordic"
-static uint8_t       m_tx_buf[] = {0};// = TEST_STRING;           /**< TX buffer. */
-static uint8_t       m_rx_buf[] = {0};//[sizeof(TEST_STRING) + 1];    /**< RX buffer. */
+static uint8_t       m_tx_buf[64];// = TEST_STRING;           /**< TX buffer. */
+static uint8_t       m_rx_buf[64];//[sizeof(TEST_STRING) + 1];    /**< RX buffer. */
 static uint8_t m_length = 0;//sizeof(m_tx_buf);        /**< Transfer length. */
 
 /**
@@ -736,7 +736,35 @@ void seS1D13C00Read( uint32_t addr, uint8_t data[], uint32_t nBytes )
 uint8_t seS1D13C00Read8( uint32_t addr )
 {
     uint8_t data;
-    seS1D13C00Read(addr, (uint8_t *)&data, 1);
+    //seS1D13C00Read(addr, (uint8_t *)&data, 1);
+
+    // change the spi speed later
+    //if (hostif_type != HOSTMCU_INDIRECT_8BIT)
+    //   SetSSI1ClkSpeed(spi_rdspeed);
+
+    // beginning of receiving the data over spi
+    m_length = 6;
+
+    // Reset rx buffer and transfer done flag
+    //memset(m_rx_buf, 0, m_length);
+    spi_xfer_done = false;
+
+    //memset(m_tx_buf, (int)write, 5);
+    m_tx_buf[0] = CMD_FASTREAD;
+    m_tx_buf[1] = (uint8_t)(addr >> 24);
+    m_tx_buf[2] = (uint8_t)(addr >> 16);
+    m_tx_buf[3] = (uint8_t)(addr >>  8);
+    m_tx_buf[4] = (uint8_t)(addr >>  0);
+
+    APP_ERROR_CHECK(nrf_drv_spi_transfer(&spi, m_tx_buf, m_length, m_rx_buf, m_length));
+
+    while (!spi_xfer_done)
+    {
+        __WFE();
+    }
+
+    data = m_rx_buf[5];
+    
     return(data);
 }
 
@@ -747,7 +775,31 @@ uint8_t seS1D13C00Read8( uint32_t addr )
 uint16_t seS1D13C00Read16( uint32_t addr )
 {
     uint16_t data;
-    seS1D13C00Read(addr, (uint8_t *)&data, 2);
+    //seS1D13C00Read(addr, (uint8_t *)&data, 2);
+
+// beginning of receiving the data over spi
+    m_length = 7;
+
+    // Reset rx buffer and transfer done flag
+    //memset(m_rx_buf, 0, m_length);
+    spi_xfer_done = false;
+
+    //memset(m_tx_buf, (int)write, 5);
+    m_tx_buf[0] = CMD_FASTREAD;
+    m_tx_buf[1] = (uint8_t)(addr >> 24);
+    m_tx_buf[2] = (uint8_t)(addr >> 16);
+    m_tx_buf[3] = (uint8_t)(addr >>  8);
+    m_tx_buf[4] = (uint8_t)(addr >>  0);
+
+    APP_ERROR_CHECK(nrf_drv_spi_transfer(&spi, m_tx_buf, m_length, m_rx_buf, m_length));
+
+    while (!spi_xfer_done)
+    {
+        __WFE();
+    }
+
+    data = ((m_rx_buf[5] << 8) | m_rx_buf[6]);
+
     return(data);
 }
 
